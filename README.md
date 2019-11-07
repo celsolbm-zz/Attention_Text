@@ -8,4 +8,4 @@ O modelo utiliza ambos tensorflow e pytorch, para tentar unir o melhor dos dois 
 
 Por fim, pode se ver a atenção em atuacao através desta imagem, onde as palavras com cor de maior intensidade representacao uma maior atenção dada pelo modelo.
 
-https://imgur.com/a/fdQl3w8
+![attention](https://imgur.com/a/fdQl3w8)
