@@ -21,9 +21,10 @@ data_index = 0
 import io
 import pandas as pd
 
-
+#carrega os dados para serem treinados em um data frame
 dados = pd.read_csv('train.csv')
 
+#carrega os anuncios em portugues (fiz apenas para os em portugues)
 port = dados.loc[dados.language == 'portuguese']
 
 def tokens(data): #utilizado para separar as frases em palavras separadas
@@ -41,13 +42,16 @@ def data_prepro2(data): #pré-processamento para limpar os dados
         i=0
         result = ' '.join(i for i in result.split() if not (i.isalpha() and len(i)<2))
         s[1][0] = result
+
+"""
+Função vestigial, nao eh mais utilizada por isso foi comentada
 def data_prepro3(data): #pré-processamento para limpar os dados
     k = len(data)
     i=0
     z = 0
     for s in data:
         for i in s:
-            if i == '_'
+            if i == '_':
                 i = ' '
         result = ''.join([i for i in s if not ( (i.isdigit() or ( not i.isalpha() )) and i!=' ' ) ]) #remove numero, e digitos unicos
         result = result.lower()
@@ -55,6 +59,7 @@ def data_prepro3(data): #pré-processamento para limpar os dados
         z+=1
         print(z)
     return data
+"""
 
 def build_dataset(words, n_words): #criar o dataset em tensorflow
     count = [['UNK', -1]]
@@ -72,11 +77,12 @@ def build_dataset(words, n_words): #criar o dataset em tensorflow
     return data, count, dictionary, reversed_dictionary
 
 
-vocabulary_size = 30000
+vocabulary_size = 30000 #numero de palavras unicas que irá ter no vocabulario
 
-data_prepro2(port)
-tok = tokens(port)
-data, count, unused_dictionary, reverse_dictionary = build_dataset(
+data_prepro2(port) #faz a preparacao dos dados, tirando numeros, letras isoladas e simbolos como barras e underlines
+tok = tokens(port) #tokeniza  as palavras para formar uma lista
+
+data, count, unused_dictionary, reverse_dictionary = build_dataset( #constroi o dataset
       tok, vocabulary_size)
 
 
@@ -122,16 +128,17 @@ graph = tf.Graph()
 
 current_path = os.path.dirname(os.path.realpath(sys.argv[0])) #formalidadaes para rodar o codigo, meio inutil
 parser = argparse.ArgumentParser()
-parser.add_argument(
+parser.add_argument( #parser para passar os dados para o treino
       '--log_dir',
       type=str,
       default=os.path.join(current_path, 'log'),
       help='The log directory for TensorBoard summaries.')
+
 flags, unused_flags = parser.parse_known_args()
 
 log_dir = flags.log_dir
 
-if not os.path.exists(log_dir):
+if not os.path.exists(log_dir): #usado mais para o caso do colab, mas na maquina local nao precisa.
     os.makedirs(log_dir)
 
 
@@ -143,7 +150,7 @@ with graph.as_default():
         valid_dataset = tf.constant(valid_examples, dtype=tf.int32)
     # Utilizando CPU pq tava fazendo no meu mac, nao tem tanto ganho assim com gpu ai deixei assim mesmo
     with tf.device('/cpu:0'):
-        # Ver os embeddings na matriz
+        # Cria os embeddings
         with tf.name_scope('embeddings'):
             embeddings = tf.Variable(
                 tf.random_uniform([vocabulary_size, embedding_size], -1.0, 1.0))
@@ -163,9 +170,9 @@ with graph.as_default():
                 inputs=embed,
                 num_sampled=num_sampled,
                 num_classes=vocabulary_size))
-    # Adiciona o valor da los
+    # Adiciona o valor da loss
     tf.summary.scalar('loss', loss)
-    # COnstroi o optimizer usando gradient descnete e uma learning rate de 1.0.
+    # COnstroi o optimizer usando gradient descent e uma learning rate de 1.0.
     with tf.name_scope('optimizer'):
         optimizer = tf.train.GradientDescentOptimizer(1.0).minimize(loss)
     # Calcula a similaridade de cada embedding
@@ -216,7 +223,7 @@ with tf.compat.v1.Session(graph=graph) as session:
         sim = similarity.eval()
         for i in xrange(valid_size):
           valid_word = reverse_dictionary[valid_examples[i]]
-          top_k = 8  # number of nearest neighbors
+          top_k = 8  # numero de classes utilizados para a comparacao
           nearest = (-sim[i, :]).argsort()[1:top_k + 1]
           log_str = 'Nearest to %s:' % valid_word
           print(
@@ -227,7 +234,7 @@ with tf.compat.v1.Session(graph=graph) as session:
     with open(log_dir + '/metadata.tsv', 'w') as f:
       for i in xrange(vocabulary_size):
         f.write(reverse_dictionary[i] + '\n')
-
+    #salva o modelo
     saver.save(session, os.path.join(log_dir, 'model.ckpt'))
     config = projector.ProjectorConfig()
     embedding_conf = config.embeddings.add()
