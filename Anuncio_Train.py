@@ -1,7 +1,11 @@
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
-
+from torch.autograd import Variable
+from tempfile import gettempdir
+from six.moves import urllib
+from six.moves import xrange  # pylint: disable=redefined-builtin
+import torch
 import argparse
 import collections
 import hashlib
@@ -9,23 +13,21 @@ import math
 import os
 import random
 import sys
-from tempfile import gettempdir
 import zipfile
 import pickle
 import numpy as np
-from six.moves import urllib
-from six.moves import xrange  # pylint: disable=redefined-builtin
 import tensorflow as tf
-import torch
-from torch.autograd import Variable
+import keras
+import torch.nn.functional as F
+import torch.utils.data as data_utils
 
 data_index = 0
 
-def tokenize_phrase(data):
+def tokenize_phrase(data): #utilizado para pegar as frases (anuncio) e separar elas em tokens
     tokens = [s[1][0].split() for s in data.iterrows()]
     return tokens
 
-def labels(data):
+def labels(data): #utiliza um dicionario para criar o label dos dados a serem treinados
     dic = dict()
     ret = []
     i=0
@@ -38,7 +40,7 @@ def labels(data):
             i+=1
     return dic, ret
 
-def create_test(data,labels):
+def create_test(data,labels): #cria os labels para o test dataset
     i=0
     tks_tst = []
     label_tst = []
@@ -48,7 +50,7 @@ def create_test(data,labels):
         i+=1000
     return tks_tst, label_tst
 
-def convert_int(tokens, dic):
+def convert_int(tokens, dic): #faz a conversao dos tokens para int, para serem utilizados nos treinamentos junto com os embedding pre treinados
     tmp = np.zeros((len(tokens),24),dtype=int)
     j=0
     k=0
@@ -61,34 +63,21 @@ def convert_int(tokens, dic):
         j+=1
     return tmp
 
-cuda0 = torch.device('cuda:0')
-torch.cuda.current_device()
+cuda0 = torch.device('cuda:0') #caso esteja treinando com gpu
 
-tks = tokenize_phrase(port)
 
-tks=convert_int(tks,unused_dic)
-
-labels = port.category.unique()
+port = pickle.load( open( "port.p", "rb" ) ) #carrega o dataframe limpo em portugues
+embeds_final = pickle.load( open( "embeds_final_np.p", "rb" ) )
+tks = tokenize_phrase(port) #faz a tokenizacao das frases
+unused_dic = pickle.load( open( "unused_dic.p", "rb" ) )  #carrega o dicionario treinado anteriormente com os embeddings
+tks=convert_int(tks,unused_dic) #converte os tokens palavras para int
+labels2 = port.category.unique() #importa os labels
 #IMPORTAR OS EMBEDDINGS UTILIZANDO PICKLE
+embeds_final = pickle.load( open( "embeds_final_np.p", "rb" ) )
 final_embeds=torch.from_numpy(embeds_final).float().to(cuda0)
-
-
-def labels(data):
-    dic = dict()
-    ret = []
-    i=0
-    for s in data.iterrows():
-        if s[1][3] in dic:
-            ret.append(dic[s[1][3]])
-        else:
-            dic[s[1][3]]=i
-            ret.append(i)
-            i+=1
-    return dic, ret
-
-dic_label, labels_num = labels(port)
-labels_num = np.array(labels_num)
-labels_num.shape
+dic_label, labels_num = labels(port) #dic label, transforma os labels em numero
+labels_num = np.array(labels_num) #transforma de lista pra numpy
+#labels_num.shape
 
 
 def train(attention_model,train_loader,criterion,optimizer,epochs = 5,use_regularization = False,C=0,clip=False):
@@ -185,11 +174,7 @@ def evaluate(attention_model,x_test,y_test):
     return torch.eq(y_preds,y_test_var).data.sum()/x_test_var.size(0)
 
 
-import torch,keras
-import numpy as np
-from torch.autograd import Variable
-import torch.nn.functional as F
-import torch.utils.data as data_utils
+
  
 class StructuredSelfAttention(torch.nn.Module):
     """
@@ -297,9 +282,12 @@ def multiclass_classification(attention_model,train_loader,epochs=5,use_regulari
     optimizer = torch.optim.RMSprop(attention_model.parameters())
     train(attention_model,train_loader,loss,optimizer,epochs,use_regularization,C,clip)
 
-final_embeds=torch.from_numpy(embeds_final).float().to(cuda0)
+final_embeds=torch.from_numpy(embeds_final).float().to(cuda0) #embeddings passando de numpy para tensor no cuda
 
+
+#loader para treinar os dados
 train_data = data_utils.TensorDataset(torch.from_numpy(tks).type(torch.LongTensor).to(cuda0),torch.from_numpy(labels_num).type(torch.LongTensor).to(cuda0))
+
 batch_size = 512
 train_loader = data_utils.DataLoader(train_data,batch_size=batch_size,drop_last=True)
 
@@ -310,3 +298,7 @@ attention_model = StructuredSelfAttention(batch_size=train_loader.batch_size,
     embeddings=final_embeds)
 
 multiclass_classification(attention_model,train_loader,epochs=10,use_regularization=True,C=0.03,clip=True)
+
+torch.save(attention_model.state_dict(), 'model.pkl')
+
+

@@ -242,5 +242,6 @@ with tf.compat.v1.Session(graph=graph) as session:
     embedding_conf.metadata_path = os.path.join(log_dir, 'metadata.tsv')
     projector.visualize_embeddings(writer, config)
 
-
-
+pickle.dump( final_embeddings, open( "embeds_final_np.p", "wb" ) )
+pickle.dump( unused_dictionary, open( "unused_dic.p", "wb" ) )
+pickle.dump( port, open( "port.p", "wb" ) )
