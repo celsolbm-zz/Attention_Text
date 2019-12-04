@@ -17,7 +17,6 @@ import zipfile
 import pickle
 import numpy as np
 import tensorflow as tf
-import keras
 import torch.nn.functional as F
 import torch.utils.data as data_utils
 
@@ -67,7 +66,6 @@ cuda0 = torch.device('cuda:0') #caso esteja treinando com gpu
 
 
 port = pickle.load( open( "port.p", "rb" ) ) #carrega o dataframe limpo em portugues
-embeds_final = pickle.load( open( "embeds_final_np.p", "rb" ) )
 tks = tokenize_phrase(port) #faz a tokenizacao das frases
 unused_dic = pickle.load( open( "unused_dic.p", "rb" ) )  #carrega o dicionario treinado anteriormente com os embeddings
 tks=convert_int(tks,unused_dic) #converte os tokens palavras para int
@@ -107,15 +105,15 @@ def train(attention_model,train_loader,criterion,optimizer,epochs = 5,use_regula
             attention_model.hidden_state = attention_model.init_hidden()
             x,y = Variable(train[0]).to('cuda:0'),Variable(train[1]).to('cuda:0')
             y_pred,att = attention_model(x)
-            #penalization AAT - I
+            #penalizando para evitar que as atencoes foquem na mesma coisa AAT - I
             if use_regularization:
                 attT = att.transpose(1,2)
                 identity = torch.eye(att.size(1))
                 identity = Variable(identity.unsqueeze(0).expand(train_loader.batch_size,att.size(1),att.size(1))).to('cuda:0')
                 penal = attention_model.l2_matrix_norm(att@attT - identity)  
             if not bool(attention_model.type) :
-                #binary classification
-                #Adding a very small value to prevent BCELoss from outputting NaN's
+                #classificacao binaria! bom para o caso da deteccao de exames
+                #Adiciona um valor pequeno para evitar que a resposta seja zero
                 correct+=torch.eq(torch.round(y_pred.type(torch.DoubleTensor).squeeze(1)),y).data.sum()
                 if use_regularization:
                     try:
@@ -138,9 +136,9 @@ def train(attention_model,train_loader,criterion,optimizer,epochs = 5,use_regula
                 torch.nn.utils.clip_grad_norm(attention_model.parameters(),0.5)
             optimizer.step()
             n_batches+=1
+            #mais coisa legada que eu usei para ver se o modelo estava funcionando
             #print("correct value is ",correct)
-            if (i>1):
-                print("avg ateh la eh ",correct.float()/(n_batches*train_loader.batch_size) )
+            #print("avg ateh la eh ",correct.float()/(n_batches*train_loader.batch_size) )
             #print("numero de tries",(n_batches*train_loader.batch_size) )
         print("avg_loss is",total_loss/n_batches)
         print("Accuracy of the model",correct.float()/(n_batches*train_loader.batch_size))
@@ -175,17 +173,13 @@ def evaluate(attention_model,x_test,y_test):
 
 
 
- 
+#O modelo de atencao em si
 class StructuredSelfAttention(torch.nn.Module):
     """
-    A implementaçao em si da classe do artigo. Foi utilizado algumas nomeclaturas
-    especiais para cada tipo de componente do modelo:
-    lstm = lstm (obvio)
-    linear_first  = ws1
-    linear_segond = ws2
-    linear_final = classificacao em si
+    A implementaçao em si da classe do artigo.
     """
-    def __init__(self,batch_size,lstm_hid_dim,d_a,r,max_len,emb_dim=100,vocab_size=None,use_pretrained_embeddings = False,embeddings=None,type=0,n_classes = 1):
+    def __init__(self,batch_size,lstm_hid_dim,d_a,r,max_len,emb_dim=128,vocab_size=None,use_pretrained_embeddings = True,embeddings=None,type=0,
+                int_dim1 = 256, int_dim2 = 2048, n_classes = 1):
         """
         Initializar os parametros sugeridos no artigo
         Args:
@@ -196,7 +190,7 @@ class StructuredSelfAttention(torch.nn.Module):
             max_len     : {int} maximo comprimento de frases
             emb_dim     : {int} dimensao do embedding
             vocab_size  : {int} tamanho do vocabulario
-            use_pretrained_embeddings: {bool} usar o proprio embedding criado aqui ou algum pré-treinado
+            use_pretrained_embeddings: {bool} usar o proprio embedding criado aqui ou algum pré-treinado #legado! nao uso mais
             embeddings  : {torch.FloatTensor} os embeddings pre-treinado 
             type        : [0,1] 0-->binary_classification 1-->multiclass classification
             n_classes   : {int} numero de classes
@@ -207,41 +201,32 @@ class StructuredSelfAttention(torch.nn.Module):
             Exception
         """
         super(StructuredSelfAttention,self).__init__()    
-        self.embeddings,emb_dim = self._load_embeddings(use_pretrained_embeddings,embeddings,vocab_size,emb_dim)
+        self.embeddings = torch.nn.Embedding(embeddings.size(0), embeddings.size(1))
+        self.embeddings.weight = torch.nn.Parameter(embeddings)
+        self.emb_dim = embeddings.size(1)
         self.lstm = torch.nn.LSTM(emb_dim,lstm_hid_dim,1,batch_first=True)
-        self.linear_first = torch.nn.Linear(lstm_hid_dim,d_a) #WS1
-        self.linear_first.bias.data.fill_(0) #bias zerado
-        self.linear_second = torch.nn.Linear(d_a,r) #Ws2, para o caso de multipla atenção
-        self.linear_second.bias.data.fill_(0) 
+        self.ws1 = torch.nn.Linear(lstm_hid_dim,d_a) #WS1
+        self.ws1.bias.data.fill_(0) #bias zerado
+        self.ws2 = torch.nn.Linear(d_a,r) #Ws2, para o caso de multipla atenção
+        self.ws2.bias.data.fill_(0) 
         self.n_classes = n_classes #numero de classes para ser utilizada na classificaçaão
-        self.linear_final = torch.nn.Linear(lstm_hid_dim,self.n_classes) #posso mudar esse parametro
+        self.inter1 = torch.nn.Linear(lstm_hid_dim,int_dim1) #legado tb! uso direto da lstm para a classe intermediaria
+        self.inter2 = torch.nn.Linear(lstm_hid_dim,2048)
+        self.linear_final = torch.nn.Linear(2048,self.n_classes) #posso mudar esse parametro
         self.batch_size = batch_size       
         self.max_len = max_len #tamanho maximo de uma frase
         self.lstm_hid_dim = lstm_hid_dim
         self.hidden_state = self.init_hidden()
         self.r = r
         self.type = type     
-    def _load_embeddings(self,use_pretrained_embeddings,embeddings,vocab_size,emb_dim):
-        """Load the embeddings"""
-        if use_pretrained_embeddings is True and embeddings is None: #usar os embeddings treinados pelo tensorflow
-            raise Exception("Send a pretrained word embedding as an argument") 
-        if not use_pretrained_embeddings and vocab_size is None:
-            raise Exception("Vocab size cannot be empty")
-        if not use_pretrained_embeddings: 
-            word_embeddings = torch.nn.Embedding(vocab_size,emb_dim,padding_idx=0) 
-        elif use_pretrained_embeddings: #usar os embeddings treinados pelo tensorflow
-            word_embeddings = torch.nn.Embedding(embeddings.size(0), embeddings.size(1)) #carrega os embeddings no sistema
-            word_embeddings.weight = torch.nn.Parameter(embeddings)
-            emb_dim = embeddings.size(1)  
-        return word_embeddings,emb_dim
     def softmax(self,input, axis=1): #aplica a normalizacao nos pesos da atencao
         """
-        Softmax applied to axis=n
+        Softmax aplicado ao eixo = n
         Args:
-           input: {Tensor,Variable} input on which softmax is to be applied
-           axis : {int} axis on which softmax is to be applied
+           input: {Tensor,Variable} input a qual a normalizacao sera aplicada
+           axis : {int} axis em que a normalizacao sera aplicada
         Returns:
-            softmaxed tensors
+            tensor normalizado
         """
         input_size = input.size()
         trans_input = input.transpose(axis, len(input_size)-1)
@@ -255,17 +240,18 @@ class StructuredSelfAttention(torch.nn.Module):
     def forward(self,x):
         embeddings = self.embeddings(x)       
         outputs, self.hidden_state = self.lstm(embeddings.view(self.batch_size,self.max_len,-1),self.hidden_state)
-        x = F.tanh(self.linear_first(outputs)) #preparando para multiplicar pela segunda matriz       
-        x = self.linear_second(x)       
+        x = F.tanh(self.ws1(outputs)) #preparando para multiplicar pela segunda matriz       
+        x = self.ws2(x)       
         x = self.softmax(x,1)       #matriz dos coeficientes de atencao
         attention = x.transpose(1,2)       
         sentence_embeddings = attention@outputs       
         avg_sentence_embeddings = torch.sum(sentence_embeddings,1)/self.r #soma os embeddings de cada attention head
-        if not bool(self.type):
-            output = F.sigmoid(self.linear_final(avg_sentence_embeddings))
-            return output,attention
-        else:
-            return F.log_softmax(self.linear_final(avg_sentence_embeddings)),attention
+        #print(avg_sentence_embeddings.shape)
+        #inter_1 = F.sigmoid(self.inter1(avg_sentence_embeddings))
+        #print(inter_1.shape)
+        inter_2 = F.sigmoid(self.inter2(avg_sentence_embeddings))
+        #print(inter_2.shape)
+        return F.log_softmax(self.linear_final(inter_2)),attention
 	#Regularization
     def l2_matrix_norm(self,m):
         """
@@ -291,14 +277,9 @@ train_data = data_utils.TensorDataset(torch.from_numpy(tks).type(torch.LongTenso
 batch_size = 512
 train_loader = data_utils.DataLoader(train_data,batch_size=batch_size,drop_last=True)
 
-
 attention_model = StructuredSelfAttention(batch_size=train_loader.batch_size,
     lstm_hid_dim=50,d_a = 100,r=10,
     vocab_size=50000,max_len=24,type=1,n_classes=1576,use_pretrained_embeddings=True,
-    embeddings=final_embeds)
+    embeddings=final_embeds).to(cuda0)
 
 multiclass_classification(attention_model,train_loader,epochs=10,use_regularization=True,C=0.03,clip=True)
-
-torch.save(attention_model.state_dict(), 'model.pkl')
-
-
