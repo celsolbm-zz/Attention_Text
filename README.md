@@ -8,4 +8,4 @@ O modelo utiliza ambos tensorflow e pytorch, para tentar unir o melhor dos dois 
 
 Por fim, pode se ver a atenção em atuacao através desta imagem, onde as palavras com cor de maior intensidade representacao uma maior atenção dada pelo modelo.
 
-![attention](https://github.com/celsolbm/NLP-with-double-attention-modules-for-prediction/blob/master/nlp_double_attention.001.jpeg)
+![attention](https://github.com/celsolbm/Attention_Text/blob/master/Screen%20Shot%202019-11-07%20at%2014.23.26.png)
